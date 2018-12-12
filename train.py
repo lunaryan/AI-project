@@ -25,7 +25,7 @@ def train():
     n_outputs = 1
     n_features = 7
     batch_size = 128
-    n_epochs = 10
+    n_epochs = 20
 
     inputs_pl = tf.placeholder (tf.float32, shape=[None, n_inputs, n_features], name='inputs_pl') # batch_size x len x n_features
     outputs_pl = tf.placeholder (tf.float32, shape=[None, n_outputs], name='outputs_pl') # batch_size x n_outputs
@@ -39,7 +39,7 @@ def train():
     tf.summary.scalar ('accuracy', accuracy)
 
     step = tf.Variable (0)
-    learning_rate = 1e-3 #get_learning_rate (step, batch_size)
+    learning_rate = get_learning_rate (step, batch_size)
     tf.summary.scalar ('learning rate', learning_rate)
     train_op = tf.train.AdamOptimizer (learning_rate).minimize (loss, global_step=step)
 
@@ -189,7 +189,7 @@ def get_model (inputs):
     '''
 
     # create RNN cell
-    num_units_list = [4, 8, 8]
+    num_units_list = [16, 32, 32]
     cells = [get_cell(num_units) for num_units in num_units_list]
     cell = tf.nn.rnn_cell.MultiRNNCell (cells)
 
@@ -199,8 +199,8 @@ def get_model (inputs):
 
     # additional fully connected layer
     with tf.variable_scope ('output_layer') as sc:
-        weight1 = tf.get_variable ('weight1', shape=[outputs.get_shape()[-1], 8], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
-        bias1 = tf.get_variable ('bias1', shape=[8], dtype=tf.float32, initializer=tf.zeros_initializer())
+        weight1 = tf.get_variable ('weight1', shape=[outputs.get_shape()[-1], 16], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
+        bias1 = tf.get_variable ('bias1', shape=[16], dtype=tf.float32, initializer=tf.zeros_initializer())
 
         outputs = tf.nn.relu (tf.matmul (outputs, weight1) + bias1)
 
