@@ -20,21 +20,70 @@ sys.path.append (UTIL_DIR)
 from data_util import OrderBook
 
 
+
+
+def get_model (inputs, is_training):
+    '''
+    Get the RNN model
+
+    Args:
+    - inputs: tf tensor;
+    - is_training: tf bool tensor;
+
+    Returns:
+    - pred: prediction;
+    '''
+
+    # create RNN cell
+    num_units_list = [4, 8]
+    cells = [get_cell(num_units) for num_units in num_units_list]
+    cell = tf.nn.rnn_cell.MultiRNNCell (cells)
+    #num_units = 32
+    #cell = get_cell (num_units)
+
+    output_seq, state = tf.nn.dynamic_rnn (cell=cell, inputs=inputs, dtype=tf.float32)
+    outputs = tf.reshape (output_seq, shape=[-1, num_units_list[-1] * inputs.get_shape()[1]])
+    #outputs = state.h
+    #print (outputs.shape)
+
+    # additional fully connected layer
+    with tf.variable_scope ('output_layer') as sc:
+        weight1 = tf.get_variable ('weight1', shape=[outputs.get_shape()[-1], 16], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
+        bias1 = tf.get_variable ('bias1', shape=[16], dtype=tf.float32, initializer=tf.zeros_initializer())
+
+        outputs = tf.matmul (outputs, weight1) + bias1
+        #outputs = dropout (outputs, is_training, 'dropout')
+        outputs = tf.nn.relu (outputs)
+
+        weight2 = tf.get_variable ('weight2', shape=[outputs.get_shape()[-1], 1], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
+        bias2 = tf.get_variable ('bias2', shape=[1], dtype=tf.float32, initializer=tf.zeros_initializer())
+
+        outputs = tf.matmul (outputs, weight2) + bias2
+        #outputs = tf.nn.relu(tf.matmul (outputs, weight2) + bias2)
+
+    #print (outputs.shape)
+    #input()
+
+    return outputs
+
+
+
 def train():
     n_inputs = 10
     n_outputs = 1
     n_features = 7
-    batch_size = 128
-    n_epochs = 20
+    batch_size = 64
+    n_epochs = 50
 
     inputs_pl = tf.placeholder (tf.float32, shape=[None, n_inputs, n_features], name='inputs_pl') # batch_size x len x n_features
     outputs_pl = tf.placeholder (tf.float32, shape=[None, n_outputs], name='outputs_pl') # batch_size x n_outputs
+    is_training_pl = tf.placeholder (tf.bool, shape=[], name='is_training')
 
-    pred = get_model (inputs_pl)
+    pred = get_model (inputs_pl, is_training_pl)
     loss = get_loss (pred, outputs_pl)
     tf.summary.scalar ('loss', loss)
 
-    accuracy = tf.losses.mean_squared_error (outputs_pl, pred) # already tested
+    accuracy = tf.sqrt(tf.losses.mean_squared_error (outputs_pl, pred)) # already tested
     # accuracy_my = tf.reduce_mean (tf.square (tf.subtract (outputs_pl, pred)))
     tf.summary.scalar ('accuracy', accuracy)
 
@@ -72,7 +121,8 @@ def train():
             for i in range (num_batches):        
                 batch_inputs, batch_labels = order_book.next_batch()
                 feed_dict = {inputs_pl: batch_inputs.reshape (batch_size, n_inputs, n_features), 
-                            outputs_pl: batch_labels.reshape(batch_size, n_outputs)}
+                            outputs_pl: batch_labels.reshape(batch_size, n_outputs),
+                            is_training_pl: True}
                 _, loss_val, acc_val, step_val, summary = sess.run ([train_op, loss, accuracy, step, merged],
                             feed_dict=feed_dict)
                 
@@ -85,7 +135,8 @@ def train():
             print ('Epoch', epoch, 'train_loss', total_loss/num_batches, 'train_acc', total_acc/num_batches)
             dev_inputs, dev_labels = order_book.dev_set()
             feed_dict = {inputs_pl: dev_inputs.reshape (-1, n_inputs, n_features),
-                        outputs_pl: dev_labels.reshape (-1, n_outputs)}
+                        outputs_pl: dev_labels.reshape (-1, n_outputs),
+                        is_training_pl: False}
             acc_val, loss_val = sess.run ([accuracy, loss], feed_dict=feed_dict)
 
             print ('dev_loss', loss_val, 'dev_acc', acc_val)
@@ -102,7 +153,7 @@ def train():
         '''
 
         test_data, _ = order_book.test_set()
-        feed_dict = {inputs_pl:test_data}
+        feed_dict = {inputs_pl:test_data, is_training_pl: False}
         pred_val = sess.run (pred, feed_dict=feed_dict)
         pred_val = np.asarray (pred_val)
         print (pred_val.shape)
@@ -129,7 +180,7 @@ def prediction ():
 def get_learning_rate (
     global_step, 
     batch_size,
-    base_learning_rate=1e-4,
+    base_learning_rate=1e-3,
     decay_rate=0.7,
     decay_step=200000,
     min_rate=1e-5):
@@ -164,6 +215,32 @@ def get_learning_rate (
 
 
 
+def dropout (
+    inputs,
+    is_training,
+    scope,
+    keep_prob=0.5
+):
+    '''
+    Dropout layer, suitable for training and testing procedure
+
+    Args:
+        inputs: tensor;
+        is_training: boolean tf variable;
+        scope: string;
+        keep_prob: float in [0, 1].
+
+    Returns:
+        tensor variable
+    '''
+
+    with tf.variable_scope (scope) as sc:
+        outputs = tf.cond (is_training,
+                lambda: tf.nn.dropout (inputs, keep_prob),
+                lambda: inputs)
+    return outputs
+
+
 
 def get_loss (prediction, labels):
     return tf.losses.huber_loss (labels, prediction)
@@ -183,46 +260,6 @@ def get_cell (num_units):
     '''
     return tf.nn.rnn_cell.LSTMCell (num_units=num_units)
 
-
-
-def get_model (inputs):
-    '''
-    Get the RNN model
-
-    Args:
-    - inputs: tf tensor;
-
-    Returns:
-    - pred: prediction;
-    '''
-
-    # create RNN cell
-    #num_units_list = [16, 32, 32]
-    #cells = [get_cell(num_units) for num_units in num_units_list]
-    #cell = tf.nn.rnn_cell.MultiRNNCell (cells)
-    cell = get_cell (32)
-
-    _, state = tf.nn.dynamic_rnn (cell=cell, inputs=inputs, dtype=tf.float32)
-    #outputs = tf.reshape (outputs, shape=[-1, num_units_list[-1] * inputs.get_shape()[1]])
-    outputs = state.h
-    #print (outputs.shape)
-
-    # additional fully connected layer
-    with tf.variable_scope ('output_layer') as sc:
-        weight1 = tf.get_variable ('weight1', shape=[outputs.get_shape()[-1], 16], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
-        bias1 = tf.get_variable ('bias1', shape=[16], dtype=tf.float32, initializer=tf.zeros_initializer())
-
-        outputs = tf.nn.relu (tf.matmul (outputs, weight1) + bias1)
-
-        weight2 = tf.get_variable ('weight2', shape=[outputs.get_shape()[-1], 1], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
-        bias2 = tf.get_variable ('bias2', shape=[1], dtype=tf.float32, initializer=tf.zeros_initializer())
-
-        outputs = tf.nn.relu (tf.matmul (outputs, weight2) + bias2)
-
-    #print (outputs.shape)
-    #input()
-
-    return outputs
 
 
 
