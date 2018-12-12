@@ -25,8 +25,8 @@ DEV_LABELS_FILENAME = 'dev_labels.npy'
 TEST_INPUTS_FILENAME = 'test_inputs.npy'
 TEST_LABELS_FILENAME = 'test_labels.npy'
 
-DATA_FILENAME = 'train1.csv'
-
+TRAIN_DATA_FILENAME = 'train_data.csv'
+TEST_DATA_FILENAME = 'test_data.csv'
 
 
 
@@ -92,7 +92,8 @@ class OrderBook:
 
         if not os.path.exists (os.path.join (self.data_dir, TRAIN_INPUTS_FILENAME)):
             # a weak test
-            self.__divide_data(os.path.join (self.data_dir, DATA_FILENAME))
+            self.__divide_data(os.path.join (self.data_dir, TRAIN_DATA_FILENAME))
+            self.__read_test_data (os.path.join (self.data_dir, TEST_DATA_FILENAME))
 
 
     @property
@@ -147,99 +148,70 @@ class OrderBook:
         (Implementation specified for projects, can not be reused)
         '''
         input_f = open (full_path_filename, 'r')
+        input_size = 10
+        output_avg_len = 20
 
         # 1. read data
-        data = [] # ordered by date, each element is a dict, 
-                # {'date':*, 'midprice':*, 'lastprice':*, 'volume':*, \
-                # 'bidprice1':*, 'bidvolume1':*, 'askprice1':*, 'askvolume1':*}
         prev_date = None
-        record = None
-
-        key_list = ['midprice', 'lastprice', 'volume', 'bidprice1', 'bidvolume1', 'askprice1', 'askvolume1']
-
-        input_f.readline() # skip the first line
-        cnt = 0
-        for raw_line in input_f:
-            line = raw_line.strip().split(',')
-            date = line[1].split(' ')[0]
-            if (prev_date is None) or (date != prev_date):
-                if prev_date:
-                    data.append (record)
-
-                # a new record
-                record = {
-                    'date':date,
-                    'midprice':[],
-                    'lastprice':[],
-                    'volume':[],
-                    'bidprice1':[],
-                    'bidvolume1':[],
-                    'askprice1':[],
-                    'askvolume1':[]
-                }
-                
-                prev_date = date
-
-            record['midprice'].append (float(line[2]))
-            record['lastprice'].append (float(line[3]))
-            record['volume'].append (int(line[4]))
-            record['bidprice1'].append (float(line[5]))
-            record['bidvolume1'].append (int(line[6]))
-            record['askprice1'].append (float (line[7]))
-            record['askvolume1'].append (int (line[8]))
-
-            cnt += 1
-            if cnt % 1000 == 0:
-                print ('line', cnt, 'finished')
-        
-        assert data[-1]['date'] != record['date']
-        data.append (record)
-
-        input_f.close()
-
-        # 2. process data to inputs and labels
-
         inputs = []
         labels = []
-        # define three constants here, specified by the project
-        NUM_INPUTS = self._num_inputs
-        NUM_LABELS = self._num_labels
-        NUM_FEATURES = self._num_features
+        line_cnt = 0 # cnt the lines already read
 
-        for record in data:
-            # each record corresponds to a date
-            # number of inputs
-            num = int((len (record['midprice']) - NUM_LABELS) / NUM_INPUTS)
-            for ind in range(num):
-                element_inputs = np.zeros([NUM_INPUTS, NUM_FEATURES], dtype=np.float32)
-                element_labels = np.zeros([NUM_LABELS], dtype=np.float32)
-                start_ind = ind * NUM_INPUTS
-                assert start_ind + NUM_LABELS <= len (record['midprice'])
+        day_entries = None # all entries in a day
+
+        input_f.readline() # skip the first line
+
+        for raw_line in input_f:
+            
+            # 1.1 read through a day
+            line = raw_line.strip().split(',')
+            date = line[1]
+
+            if (prev_date is None) or prev_date != date:
                 
-                for i in range (len(key_list)):
-                    element_inputs[:, i] = record[key_list[i]][start_ind:start_ind+NUM_INPUTS]
-                element_labels = record['midprice'][start_ind:start_ind+NUM_LABELS]
-                
-                inputs.append (element_inputs)
-                labels.append (element_labels)
+                if (prev_date is not None):
+                    # means data for date are collected
+                    num_inputs = (len(day_entries) - output_avg_len) // input_size
+                    for i in range (num_inputs):
+                        inputs.append (day_entries[input_size * i: input_size * (i+1)])
+                        
+                        avg_mid_price = 0.0
+                        for j in range (output_avg_len):
+                            avg_mid_price += day_entries[input_size * (i+1) + j][0]
+                        avg_mid_price /= output_avg_len
 
-        print ('# samples', len(inputs))
+                        labels.append (avg_mid_price)
 
-        # 3. shuffle indices
+                prev_date = date
+                day_entries = []
 
-        length = len(inputs)
+            # 1.2 preprocess data: type + normalization
+            for i in range (3, len(line)):
+                line[i] = float (line[i])
+            self.__normalize (line)
+
+            day_entries.append (line[3:])
+
+            line_cnt += 1
+            if line_cnt % 5000 == 0:
+                print ('line', line_cnt, 'finished')
+
+            
+        # 2. after all inputs and labels are stored, shuffle indices
+        length = len (inputs)
         indices = list (range(length))
         np.random.shuffle (indices)
-        
-        train_data_bound = int (0.7 * length)
-        dev_data_bound = int (0.8 * length)
-        test_data_bound = int (length) # not used, just for demonstration
+
+        train_data_bound = int (0.8 * length)
+        dev_data_bound = int (length)
+        #test_data_bound = int (length) # not used, just for demonstration
 
         print ('# train', train_data_bound)
         print ('# dev', dev_data_bound - train_data_bound)
-        print ('# test', test_data_bound - dev_data_bound)
+        #print ('# test', test_data_bound - dev_data_bound)
 
-        # 4. save divided data respectively
+
+        # 3. save divided data respectively
         train_inputs = []
         train_labels = []
         for ind in indices[:train_data_bound]:
@@ -248,20 +220,76 @@ class OrderBook:
         
         dev_inputs = []
         dev_labels = []
-        for ind in indices[train_data_bound:dev_data_bound]:
+        for ind in indices[train_data_bound:]:
             dev_inputs.append (inputs[ind])
             dev_labels.append (labels[ind])
 
+        '''
         test_inputs = []
         test_labels = []
         for ind in indices[dev_data_bound:]:
             test_inputs.append (inputs[ind])
             test_labels.append (labels[ind])
+        '''
 
         full_path_dir = os.path.dirname (full_path_filename)
         _save_data (train_inputs, train_labels, full_path_dir, TRAIN_INPUTS_FILENAME, TRAIN_LABELS_FILENAME)
         _save_data (dev_inputs, dev_labels, full_path_dir, DEV_INPUTS_FILENAME, DEV_LABELS_FILENAME)
-        _save_data (test_inputs, test_labels, full_path_dir, TEST_INPUTS_FILENAME, TEST_LABELS_FILENAME)
+        #_save_data (test_inputs, test_labels, full_path_dir, TEST_INPUTS_FILENAME, TEST_LABELS_FILENAME)
+
+
+    
+    def __read_test_data (self, full_path_filename):
+        '''
+        Read and save test data set
+        '''
+
+        f = open (full_path_filename, 'r')
+
+        f.readline() # skip the first line
+
+        line_cnt = 0
+        case_line_cnt = 0
+        n_case_inputs = 10
+
+        inputs = []
+        case_inputs = []
+
+        for raw_line in f:
+            if line_cnt % 5000 == 0 and line_cnt != 0:
+                print ('line', line_cnt, 'finished')
+            line_cnt += 1
+            line = raw_line.strip()
+            
+            if line == '':
+                # separate line
+                assert len (case_inputs) == n_case_inputs 
+                inputs.append (case_inputs)
+                case_inputs = []
+                case_line_cnt = 0
+                continue
+
+            line = line.split (',')
+            case_line_cnt += 1
+            
+            for i in range (3, len(line)):
+                line[i] = float(line[i])
+            self.__normalize (line)
+            case_inputs.append (line[3:])
+
+        f.close()
+
+        full_path_dir = os.path.dirname (full_path_filename)
+        _save_data (inputs, [], full_path_dir, TEST_INPUTS_FILENAME, TEST_LABELS_FILENAME)
+
+
+    def __normalize (self, line):
+        '''
+        Make large terms smaller
+        '''
+        line[5] = line[5]/1e8
+        line[7] = line[7]/1e6
+        line[9] = line[9]/1e6
 
 
     def __padding (self, inputs, labels):
@@ -300,7 +328,7 @@ class OrderBook:
 
         Returns:
             train_inputs_batch: a padded input batch, batch_size x max_len x n_input
-            train_labels_batch: a padded label batch, batch_size x max_len x 1
+            train_labels_batch: a padded label batch, batch_size x 1
         '''
 
         if self.train_inputs is None:
@@ -330,10 +358,10 @@ class OrderBook:
 
         Returns:
             dev_inputs: a list of inputs (lists);
-            dev_lables: a list of labels (lists)
+            dev_lables: a list of labels
         '''
 
-        if not self.dev_inputs:
+        if self.dev_inputs is None:
             self.dev_inputs, self.dev_labels = _read_data (self.data_dir, DEV_INPUTS_FILENAME, DEV_LABELS_FILENAME)
 
         return self.dev_inputs, self.dev_labels
@@ -348,7 +376,7 @@ class OrderBook:
             test_labels: a list of labels
         '''
 
-        if not self.test_inputs:
+        if self.test_inputs is None:
             self.test_inputs, self.test_labels = _read_data (self.data_dir, TEST_INPUTS_FILENAME, TEST_LABELS_FILENAME)
 
         return self.test_inputs, self.test_labels
@@ -364,11 +392,12 @@ if __name__ == "__main__":
     DATA_DIR = os.path.join (PROJECT_DIR, 'data')
 
     order_book = OrderBook (256, DATA_DIR)
-    for i in range (order_book.num_batches):
+    print (order_book.num_batches)
+    for i in range (10):
         inputs, labels = order_book.next_batch ()
         print (inputs.shape)
         print (labels.shape)
 
-    order_book.dev_set()
-    order_book.test_set()
+    test_inputs, _ = order_book.test_set()
+    print (test_inputs)
 

@@ -11,9 +11,157 @@ import numpy as np
 BASE_DIR = os.path.dirname (os.path.abspath (sys.argv[0]))
 DATA_DIR = os.path.join (BASE_DIR, 'data')
 UTIL_DIR = os.path.join (BASE_DIR, 'util')
+LOG_DIR = os.path.join (BASE_DIR, 'log')
+SAVE_DIR = os.path.join (LOG_DIR, 'save')
+MODEL_FILENAME = 'order-book-model'
+OUTPUT_FILENAME = 'output.csv'
 
 sys.path.append (UTIL_DIR)
 from data_util import OrderBook
+
+
+def train():
+    n_inputs = 10
+    n_outputs = 1
+    n_features = 7
+    batch_size = 128
+    n_epochs = 2
+
+    inputs_pl = tf.placeholder (tf.float32, shape=[None, n_inputs, n_features], name='inputs_pl') # batch_size x len x n_features
+    outputs_pl = tf.placeholder (tf.float32, shape=[None, n_outputs], name='outputs_pl') # batch_size x n_outputs
+
+    pred = get_model (inputs_pl)
+    loss = get_loss (pred, outputs_pl)
+    tf.summary.scalar ('loss', loss)
+
+    accuracy = tf.losses.mean_squared_error (outputs_pl, pred) # already tested
+    # accuracy_my = tf.reduce_mean (tf.square (tf.subtract (outputs_pl, pred)))
+    tf.summary.scalar ('accuracy', accuracy)
+
+    step = tf.Variable (0)
+    learning_rate = 1e-3 #get_learning_rate (step, batch_size)
+    tf.summary.scalar ('learning rate', learning_rate)
+    train_op = tf.train.AdamOptimizer (learning_rate).minimize (loss, global_step=step)
+
+
+    merged = tf.summary.merge_all()
+    init = tf.global_variables_initializer()
+
+    order_book = OrderBook (batch_size, DATA_DIR)
+    num_batches = order_book.num_batches
+    
+    output_f = open (os.path.join (BASE_DIR, OUTPUT_FILENAME), 'w')
+    output_f.write ('caseid,midprice\n')
+
+    with tf.Session () as sess:
+        sess.run (init)
+
+        # create summary writers
+        train_writer = tf.summary.FileWriter (os.path.join (LOG_DIR, 'train'), graph=sess.graph)
+        test_writer = tf.summary.FileWriter (os.path.join (LOG_DIR, 'test'), graph=sess.graph)
+
+        # create saver
+        saver = tf.train.Saver (max_to_keep=3)
+
+        step_val = None
+        for epoch in range (n_epochs):
+            order_book.reset_batch()
+            total_loss = 0.0
+            total_acc = 0.0
+            
+            for i in range (num_batches):        
+                batch_inputs, batch_labels = order_book.next_batch()
+                feed_dict = {inputs_pl: batch_inputs.reshape (batch_size, n_inputs, n_features), 
+                            outputs_pl: batch_labels.reshape(batch_size, n_outputs)}
+                _, loss_val, acc_val, step_val, summary = sess.run ([train_op, loss, accuracy, step, merged],
+                            feed_dict=feed_dict)
+                
+                # after every batch
+                total_acc += acc_val
+                total_loss += loss_val
+
+                train_writer.add_summary (summary, global_step=step_val)
+
+            print ('Epoch', epoch, 'train_loss', total_loss/num_batches, 'train_acc', total_acc/num_batches)
+            dev_inputs, dev_labels = order_book.dev_set()
+            feed_dict = {inputs_pl: dev_inputs.reshape (-1, n_inputs, n_features),
+                        outputs_pl: dev_labels.reshape (-1, n_outputs)}
+            acc_val, loss_val = sess.run ([accuracy, loss], feed_dict=feed_dict)
+
+            print ('dev_loss', loss_val, 'dev_acc', acc_val)
+
+            saver.save (sess, os.path.join (SAVE_DIR, MODEL_FILENAME), global_step=step_val)
+
+        '''
+        test_inputs, test_labels = order_book.test_set()
+        feed_dict = {inputs_pl: test_inputs.reshape (-1, n_inputs, n_features),
+                    outputs_pl: test_labels.reshape (-1, n_outputs)}
+        acc_val, loss_val = sess.run ([accuracy, loss], feed_dict=feed_dict)
+
+        print ('acc', acc_val, 'loss', loss_val)
+        '''
+
+        test_data, _ = order_book.test_set()
+        feed_dict = {inputs_pl:test_data}
+        pred_val = sess.run (pred, feed_dict=feed_dict)
+        pred_val = np.asarray (pred_val)
+        print (pred_val.shape)
+
+        for i in range (len (pred_val)):
+            output_f.write (str(i+1)+','+str(pred_val[i][0])+'\n')
+
+    output_f.close()
+
+
+
+    
+
+
+
+def get_learning_rate (
+    global_step, 
+    batch_size,
+    base_learning_rate=1e-3,
+    decay_rate=0.7,
+    decay_step=2000,
+    min_rate=1e-4):
+    '''
+    Learning rate decay by global step
+
+    Args:
+        global_step: tf variable.
+        base_learning_rate: float.
+        batch_size: int. 
+        decay_rate: float.
+        decay_step: int.
+        min_rate: float. lower bound of learning rate
+
+    Returns:
+        learning_rate: tf variable.
+    '''
+
+    '''
+    exponential_decay(learning_rate, global_step,
+    param learning_rate
+    decay_steps,                        decay_rate,
+    staircase=False,                        name=None)
+    '''
+    learning_rate = tf.train.exponential_decay (
+                    base_learning_rate,
+                    global_step * batch_size,
+                    decay_step,
+                    decay_rate)
+    learning_rate = tf.maximum(learning_rate, min_rate)
+    return learning_rate 
+
+
+
+
+def get_loss (prediction, labels):
+    return tf.losses.huber_loss (labels, prediction)
+
+
+
 
 def get_cell (num_units):
     '''
@@ -27,23 +175,45 @@ def get_cell (num_units):
     '''
     return tf.nn.rnn_cell.BasicLSTMCell (num_units=num_units)
 
-def train():
-    n_features = 7
-    n_input_sequence = 10
-    n_output_sequence = 20
 
-    inputs_pl = tf.placeholder (tf.float32, shape=[None, n_input_sequence, n_features]) # batch_size x input_sequence x n_features
-    labels_pl = tf.placeholder (tf.float32, shape=[None, n_output_sequence]) # batch_size x output_sequence
-    zeros = np.
 
-    # define rnn cells
-    n_layers = 3
-    cells = [get_cell(64), get_cell(256), get_cell(128)]
-    rnn_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
-    
-    # use an auto-encoder style
-    _, state = tf.nn.dynamic_rnn (cell=rnn_cell, inputs=inputs_pl, dtype=tf.float32, time_major=False)
-    outputs, _ = tf.nn.dynamic_rnn (cell=rnn_cell, inputs, dtype=tf.float32, time_major=False)
+def get_model (inputs):
+    '''
+    Get the RNN model
+
+    Args:
+    - inputs: tf tensor;
+
+    Returns:
+    - pred: prediction;
+    '''
+
+    # create RNN cell
+    num_units_list = [4, 8, 8]
+    cells = [get_cell(num_units) for num_units in num_units_list]
+    cell = tf.nn.rnn_cell.MultiRNNCell (cells)
+
+    outputs, state = tf.nn.dynamic_rnn (cell=cell, inputs=inputs, dtype=tf.float32)
+    outputs = tf.reshape (outputs, shape=[-1, num_units_list[-1] * inputs.get_shape()[1]])
+    #print (outputs.shape)
+
+    # additional fully connected layer
+    with tf.variable_scope ('output_layer') as sc:
+        weight1 = tf.get_variable ('weight1', shape=[outputs.get_shape()[-1], 8], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
+        bias1 = tf.get_variable ('bias1', shape=[8], dtype=tf.float32, initializer=tf.zeros_initializer())
+
+        outputs = tf.nn.relu (tf.matmul (outputs, weight1) + bias1)
+
+        weight2 = tf.get_variable ('weight2', shape=[outputs.get_shape()[-1], 1], dtype=tf.float32, initializer=tf.truncated_normal_initializer())
+        bias2 = tf.get_variable ('bias2', shape=[1], dtype=tf.float32, initializer=tf.zeros_initializer())
+
+        outputs = tf.nn.relu (tf.matmul (outputs, weight2) + bias2)
+
+    #print (outputs.shape)
+    #input()
+
+    return outputs
+
 
 
 def test():
@@ -76,4 +246,4 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    train()
