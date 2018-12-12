@@ -108,13 +108,21 @@ def train():
         print (pred_val.shape)
 
         for i in range (len (pred_val)):
+            if i < 142:
+                continue
             output_f.write (str(i+1)+','+str(pred_val[i][0])+'\n')
 
     output_f.close()
 
 
 
-    
+
+def prediction ():
+    '''
+    Predict via restoring trained models
+    '''
+
+    pass
 
 
 
@@ -189,12 +197,14 @@ def get_model (inputs):
     '''
 
     # create RNN cell
-    num_units_list = [16, 32, 32]
-    cells = [get_cell(num_units) for num_units in num_units_list]
-    cell = tf.nn.rnn_cell.MultiRNNCell (cells)
+    #num_units_list = [16, 32, 32]
+    #cells = [get_cell(num_units) for num_units in num_units_list]
+    #cell = tf.nn.rnn_cell.MultiRNNCell (cells)
+    cell = get_cell (32)
 
-    outputs, state = tf.nn.dynamic_rnn (cell=cell, inputs=inputs, dtype=tf.float32)
-    outputs = tf.reshape (outputs, shape=[-1, num_units_list[-1] * inputs.get_shape()[1]])
+    _, state = tf.nn.dynamic_rnn (cell=cell, inputs=inputs, dtype=tf.float32)
+    #outputs = tf.reshape (outputs, shape=[-1, num_units_list[-1] * inputs.get_shape()[1]])
+    outputs = state.h
     #print (outputs.shape)
 
     # additional fully connected layer
