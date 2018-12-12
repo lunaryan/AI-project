@@ -121,10 +121,10 @@ def train():
 def get_learning_rate (
     global_step, 
     batch_size,
-    base_learning_rate=1e-3,
+    base_learning_rate=1e-4,
     decay_rate=0.7,
-    decay_step=2000,
-    min_rate=1e-4):
+    decay_step=200000,
+    min_rate=1e-5):
     '''
     Learning rate decay by global step
 
@@ -173,7 +173,7 @@ def get_cell (num_units):
     Returns:
         an instance of a subclass of RNNCell 
     '''
-    return tf.nn.rnn_cell.BasicLSTMCell (num_units=num_units)
+    return tf.nn.rnn_cell.LSTMCell (num_units=num_units)
 
 
 
