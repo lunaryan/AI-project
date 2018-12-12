@@ -25,7 +25,7 @@ def train():
     n_outputs = 1
     n_features = 7
     batch_size = 128
-    n_epochs = 2
+    n_epochs = 10
 
     inputs_pl = tf.placeholder (tf.float32, shape=[None, n_inputs, n_features], name='inputs_pl') # batch_size x len x n_features
     outputs_pl = tf.placeholder (tf.float32, shape=[None, n_outputs], name='outputs_pl') # batch_size x n_outputs
